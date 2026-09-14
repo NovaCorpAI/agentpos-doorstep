@@ -54,7 +54,7 @@ docs/            architecture, security and privacy, AWS integration, friction l
 
 ## Run
 
-Requirements: Node >= 22.5 (uses `node:sqlite`, no native dependencies), pnpm 9+.
+Requirements: Node >= 22.5 (uses `node:sqlite`, no native dependencies), pnpm 11+.
 
 ```bash
 pnpm install
