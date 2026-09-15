@@ -1,32 +1,39 @@
 /**
  * HMAC verification for Ring webhooks.
  *
- * Ring signs webhook deliveries with an HMAC key issued per app in the Ring Developer
- * Console. The exact header name and digest encoding are taken from the Ring API reference
- * and configured by the caller; this module only does the cryptographic comparison, in
- * constant time, and refuses anything malformed. A webhook that fails verification is
- * dropped before any parsing of its body.
+ * Ring signs every webhook delivery with the per-app HMAC Signature Key issued once in the
+ * Ring Developer Console. Per the Ring Partner API reference: header `X-Signature`,
+ * HMAC-SHA256 over the raw body bytes, hex digest with a `sha256=` prefix. The comparison
+ * runs in constant time and anything missing, malformed or invalid is dropped before the
+ * body is parsed.
  */
 import { createHmac, timingSafeEqual } from "node:crypto";
+
+export const RING_SIGNATURE_HEADER = "X-Signature";
+export const RING_SIGNATURE_PREFIX = "sha256=";
 
 export type HmacEncoding = "hex" | "base64";
 
 export interface VerifyWebhookInput {
   /** Raw request body, exactly as received (bytes, not re-serialized JSON). */
   rawBody: Uint8Array | string;
-  /** Signature value taken from the configured header. */
+  /** Signature value taken from the `X-Signature` header. */
   signature: string | undefined | null;
-  /** Per-app HMAC key from the Ring Developer Console. */
+  /** Per-app HMAC Signature Key from the Ring Developer Console. */
   key: string;
   algorithm?: "sha256" | "sha512";
   encoding?: HmacEncoding;
-  /** Optional prefix Ring may put in front of the digest, e.g. "sha256=". */
+  /** Prefix Ring puts in front of the digest. Defaults to `sha256=`; pass "" for none. */
   prefix?: string;
 }
 
 export type VerifyWebhookResult =
   | { ok: true }
-  | { ok: false; code: "WEBHOOK_SIGNATURE_MISSING" | "WEBHOOK_SIGNATURE_MALFORMED" | "WEBHOOK_SIGNATURE_INVALID"; hint: string };
+  | {
+      ok: false;
+      code: "WEBHOOK_SIGNATURE_MISSING" | "WEBHOOK_SIGNATURE_MALFORMED" | "WEBHOOK_SIGNATURE_INVALID";
+      hint: string;
+    };
 
 export function computeWebhookDigest(
   rawBody: Uint8Array | string,
@@ -37,31 +44,36 @@ export function computeWebhookDigest(
   return createHmac(algorithm, key).update(rawBody).digest(encoding);
 }
 
+/** The exact header value Ring would send for this body: `sha256=<hex>`. Useful for tests and simulators. */
+export function signWebhookBody(rawBody: Uint8Array | string, key: string): string {
+  return `${RING_SIGNATURE_PREFIX}${computeWebhookDigest(rawBody, key)}`;
+}
+
 export function verifyWebhookSignature(input: VerifyWebhookInput): VerifyWebhookResult {
   const algorithm = input.algorithm ?? "sha256";
   const encoding = input.encoding ?? "hex";
+  const prefix = input.prefix ?? RING_SIGNATURE_PREFIX;
   if (!input.signature) {
     return {
       ok: false,
       code: "WEBHOOK_SIGNATURE_MISSING",
-      hint: "Configure the signature header name from the Ring API reference and make sure the key is set.",
+      hint: `Ring sends the digest in the ${RING_SIGNATURE_HEADER} header. Check the webhook URL configured in the console and that RING_WEBHOOK_HMAC_KEY is set.`,
     };
   }
   let presented = input.signature.trim();
-  if (input.prefix && presented.startsWith(input.prefix)) {
-    presented = presented.slice(input.prefix.length);
+  if (prefix !== "") {
+    if (!presented.startsWith(prefix)) {
+      return { ok: false, code: "WEBHOOK_SIGNATURE_MALFORMED", hint: `Signature must start with "${prefix}".` };
+    }
+    presented = presented.slice(prefix.length);
   }
   const expected = computeWebhookDigest(input.rawBody, input.key, algorithm, encoding);
-  let a: Buffer;
-  let b: Buffer;
-  try {
-    a = Buffer.from(presented, encoding);
-    b = Buffer.from(expected, encoding);
-  } catch {
-    return { ok: false, code: "WEBHOOK_SIGNATURE_MALFORMED", hint: `Signature is not valid ${encoding}.` };
-  }
+  // Buffer.from does not throw on bad input; it decodes what it can. The length check
+  // below catches truncated or non-hex input, and timingSafeEqual catches the rest.
+  const a = Buffer.from(presented, encoding);
+  const b = Buffer.from(expected, encoding);
   if (a.length === 0 || a.length !== b.length) {
-    return { ok: false, code: "WEBHOOK_SIGNATURE_MALFORMED", hint: "Signature length does not match the digest." };
+    return { ok: false, code: "WEBHOOK_SIGNATURE_MALFORMED", hint: `Signature is not a valid ${encoding} ${algorithm} digest.` };
   }
   if (!timingSafeEqual(a, b)) {
     return {

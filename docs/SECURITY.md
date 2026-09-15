@@ -15,4 +15,21 @@
 - **Data stays in the US**, where Ring devices are supported today.
 - **Ring Appstore content policy** as a design constraint: no surveillance of individuals, no
   recognition, no cross-property tracking, no covert access.
+- **Ring tokens** live per household in storage, are wiped on revocation
+  (`revokeHousehold`) and removed on deletion (`DELETE /households/:id`). Encrypted at rest
+  in the hosted tier.
 - **Secrets only in the environment**; `.env.example` is always current.
+
+## Pilot households
+
+Up to two US households may receive real packages during the last week, as Ring staging
+users. Conditions: written consent (this text, dated and signed by an adult in the
+household), hashed address only, orders are test orders, no name or address in the repo, the
+video or any screenshot, and full deletion at the end of the hackathon with confirmation.
+Consent text:
+
+> I authorize NovaCorpAI SpA to receive event metadata (type, device, time) from my Ring
+> account through the Doorstep staging app for the purpose of testing delivery
+> confirmations, from the date below until 2026-11-30 at the latest. No video or images are
+> accessed. I can revoke by removing the app from my Ring account at any time, and all data
+> will be deleted on request or at the end of the test, whichever comes first.
